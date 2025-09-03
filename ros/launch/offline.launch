@@ -1,0 +1,27 @@
+<!-- vim: set filetype=xml : -->
+<launch>
+  <arg name="config_file" default=""/>
+  <arg name="bag_filename" default=""/>
+  <arg name="results_dir" default="/home/dev/ros_ws/results"/>
+  <arg name="run_name" default="rko_lio_offline_run"/>
+  <arg name="skip_to_time" default="0.0"/>
+  <arg name="publish_deskewed_cloud" default="true"/>
+  <arg name="rviz" default="false"/>
+  <arg name="rviz_config_file" default="ros1.rviz"/>
+
+  <node pkg="rko_lio" type="offline_node" name="rko_lio_offline_node" output="screen" required="true">
+    <param name="bag_filename" value="$(arg bag_filename)" />
+    <param name="results_dir" value="$(arg results_dir)" />
+    <param name="run_name" value="$(arg run_name)" />
+    <param name="skip_to_time" value="$(arg skip_to_time)" />
+    <param name="publish_deskewed_cloud" value="$(arg publish_deskewed_cloud)" />
+    <!-- Load parameters from a YAML file -->
+    <rosparam file="$(find rko_lio)/config/$(arg config_file)" command="load" />
+  </node>
+    
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz" 
+          args="-d $(find rko_lio)/config/$(arg rviz_config_file)" output="screen"/>
+  </group>
+</launch>
+
