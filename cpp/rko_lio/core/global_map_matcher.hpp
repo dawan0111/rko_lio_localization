@@ -22,32 +22,40 @@
  * SOFTWARE.
  */
 #pragma once
+#include "sparse_voxel_grid.hpp"
 #include "util.hpp"
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/io/ply_io.h>
-#include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-#include <pcl/registration/icp.h>
+#include <teaser/ply_io.h>
+#include <teaser/registration.h>
 
-#include <teaser/registration.h> // libteaser_registration
+#include <tbb/blocked_range.h>
+#include <tbb/concurrent_vector.h>
+#include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
 
 namespace rko_lio::core {
 
+using OneCorrespondence = std::pair<Eigen::Vector3d, Eigen::Vector3d>;
+using Correspondences = tbb::concurrent_vector<OneCorrespondence>;
+
 class GlobalMapMatcher {
 public:
-  GlobalMapMatcher(std::string& global_map_path, const std::string& lidar_tf_name);
-  // Sophus::SE3d solve(const LidarFrame& lidar_frame);
+  GlobalMapMatcher(const std::string& global_map_path,
+                   const double voxel_size,
+                   const double clipping_distance,
+                   const unsigned int max_points_per_voxel)
+      : global_map_path_(global_map_path), global_map_(voxel_size, clipping_distance, max_points_per_voxel) {
+    initialize();
+  };
+  Sophus::SE3d solve(const LidarFrame& lidar_frame);
 
 private:
-  Sophus::SE3d getWorldPose_();
+  void initialize();
   Vector3dVector transformPoint_(const Sophus::SE3d& pose, const Vector3dVector& points);
-  std::tuple<Vector3dVector, Vector3dVector> getMapCorrespondences(const Vector3dVector& points, int max_size = 4000);
 
   std::unique_ptr<teaser::RobustRegistrationSolver> solver_ptr_;
-  pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_;
   std::string global_map_path_;
   std::string lidar_tf_name_;
-  pcl::PointCloud<pcl::PointXYZ>::Ptr global_map_{new pcl::PointCloud<pcl::PointXYZ>};
+  SparseVoxelGrid global_map_;
 };
 } // namespace rko_lio::core

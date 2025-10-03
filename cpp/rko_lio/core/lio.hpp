@@ -23,6 +23,7 @@
  */
 
 #pragma once
+#include "global_map_matcher.hpp"
 #include "sparse_voxel_grid.hpp"
 #include "util.hpp"
 #include <filesystem>
@@ -83,10 +84,14 @@ public:
     double max_expected_jerk = 3; // m/s3
     bool double_downsample = true;
     double min_beta = 200;
+
+    double global_voxel_size = 0.1;
+    std::string global_map_path = "";
   };
 
   Config config;
   SparseVoxelGrid map;
+  GlobalMapMatcher global_matcher;
   State lidar_state;
   ImuBias imu_bias;
   Eigen::Vector3d mean_body_acceleration = Eigen::Vector3d::Zero();
@@ -95,7 +100,10 @@ public:
   IntervalStats interval_stats;
 
   explicit LIO(const Config& config_)
-      : config(config_), map(config_.voxel_size, config_.max_range, config_.max_points_per_voxel) {}
+      : config(config_),
+        map(config_.voxel_size, config_.max_range, config_.max_points_per_voxel),
+        global_matcher(
+            config_.global_map_path, config_.global_voxel_size, config_.max_range, config_.max_points_per_voxel) {}
 
   void add_imu_measurement(const ImuControl& base_imu);
   // Pre-transform the data by the extrinsic

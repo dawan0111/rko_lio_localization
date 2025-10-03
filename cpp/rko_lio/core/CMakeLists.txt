@@ -39,11 +39,10 @@ target_sources(
          BASE_DIRS
          ../..)
          
-target_include_directories(rko_lio.core PRIVATE ${PCL_INCLUDE_DIRS})
 target_link_libraries(
   rko_lio.core
   PRIVATE nlohmann_json::nlohmann_json TBB::tbb
-  PUBLIC bonxai_core Sophus::Sophus Eigen3::Eigen ${PCL_LIBRARIES})
+  PUBLIC bonxai_core Sophus::Sophus Eigen3::Eigen teaserpp::teaser_registration teaserpp::teaser_io)
 target_compile_features(rko_lio.core PUBLIC cxx_std_20)
 
 # install is a problem because at least Bonxai is always fetch-contented, and

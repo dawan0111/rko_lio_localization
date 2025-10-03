@@ -30,8 +30,7 @@ find_package(Sophus REQUIRED CONFIG)
 find_package(TBB REQUIRED CONFIG)
 find_package(nlohmann_json REQUIRED CONFIG)
 find_package(Bonxai REQUIRED CONFIG)
-find_package(MPI REQUIRED COMPONENTS C CXX)
-find_package(PCL REQUIRED COMPONENTS common io filters kdtree)
+find_package(teaserpp REQUIRED)
 
 add_subdirectory(cpp/rko_lio/core)
 
