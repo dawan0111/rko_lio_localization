@@ -25,7 +25,7 @@ add_library(rko_lio::core ALIAS rko_lio.core)
 target_sources(
   rko_lio.core
   PRIVATE lio.cpp sparse_voxel_grid.cpp voxel_down_sample.cpp
-          process_timestamps.cpp
+          process_timestamps.cpp global_map_matcher.cpp
   PUBLIC FILE_SET
          HEADERS
          FILES
@@ -35,12 +35,15 @@ target_sources(
          ../../rko_lio/core/sparse_voxel_grid.hpp
          ../../rko_lio/core/util.hpp
          ../../rko_lio/core/voxel_down_sample.hpp
+         ../../rko_lio/core/global_map_matcher.hpp
          BASE_DIRS
          ../..)
+         
+target_include_directories(rko_lio.core PRIVATE ${PCL_INCLUDE_DIRS})
 target_link_libraries(
   rko_lio.core
   PRIVATE nlohmann_json::nlohmann_json TBB::tbb
-  PUBLIC bonxai_core Sophus::Sophus Eigen3::Eigen)
+  PUBLIC bonxai_core Sophus::Sophus Eigen3::Eigen ${PCL_LIBRARIES})
 target_compile_features(rko_lio.core PUBLIC cxx_std_20)
 
 # install is a problem because at least Bonxai is always fetch-contented, and

@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 cmake_minimum_required(VERSION 3.28)
-project(rko_lio LANGUAGES CXX)
+project(rko_lio LANGUAGES C CXX)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies.cmake)
 
@@ -30,6 +30,8 @@ find_package(Sophus REQUIRED CONFIG)
 find_package(TBB REQUIRED CONFIG)
 find_package(nlohmann_json REQUIRED CONFIG)
 find_package(Bonxai REQUIRED CONFIG)
+find_package(MPI REQUIRED COMPONENTS C CXX)
+find_package(PCL REQUIRED COMPONENTS common io filters kdtree)
 
 add_subdirectory(cpp/rko_lio/core)
 
