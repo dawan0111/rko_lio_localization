@@ -508,11 +508,28 @@ Vector3dVector LIO::register_scan(const Sophus::SE3d& extrinsic_lidar2base,
 }
 
 Sophus::SE3d LIO::register_global_scan(const Vector3dVector& frame, const Sophus::SE3d& initial_guess) {
-  auto correction_guess = transform_map_to_odom * initial_guess;
-  const Correspondences& correspondences = data_association(initial_guess, frame, global_matcher.global_map, config);
-  auto global_optimize_pose = global_matcher.solve(correspondences);
+  auto transform_map_to_base = transform_map_to_odom * initial_guess;
 
-  return global_optimize_pose;
+  const Correspondences& correspondences =
+      data_association(transform_map_to_base, frame, global_matcher.global_map, config);
+
+  if (correspondences.size() < 3) {
+    std::cout << "[WARNING] Not enough correspondences, keep previous map->odom.\n";
+    return transform_map_to_odom;
+  }
+
+  auto transform_map_to_optimize = global_matcher.solve(correspondences);
+  if (transform_map_to_optimize.log().norm() < EPSILON) {
+    std::cout << "[WARNING] Global registration produced negligible update, keep previous map->odom.\n";
+    return transform_map_to_odom;
+  }
+
+  auto transform_base_to_optimize = transform_map_to_base.inverse() * transform_map_to_optimize;
+  auto transform_odom_to_optimize = initial_guess * transform_base_to_optimize;
+
+  transform_map_to_odom = transform_map_to_optimize * transform_odom_to_optimize.inverse();
+
+  return transform_map_to_odom;
 }
 
 // ============================ logs ===============================

@@ -41,8 +41,35 @@ void GlobalMapMatcher::initialize() {
 }
 
 Sophus::SE3d GlobalMapMatcher::solve(const Correspondences& correspondences) {
-  std::cout << "Solve not implemented yet.\n" << std::endl;
-  return Sophus::SE3d();
+  const std::size_t N = correspondences.size();
+  if (N < 3) {
+    std::cerr << "[GlobalMapMatcher] Not enough correspondences (" << N << "). Returning identity.\n";
+    return Sophus::SE3d{};
+  }
+
+  Eigen::Matrix<double, 3, Eigen::Dynamic> src(3, N);
+  Eigen::Matrix<double, 3, Eigen::Dynamic> tgt(3, N);
+
+  tbb::parallel_for(std::size_t{0}, N, [&](std::size_t i) {
+    const auto& c = correspondences[i];
+    src.col(i) = c.first;
+    tgt.col(i) = c.second;
+  });
+
+  try {
+    solver_ptr_->solve(src, tgt);
+    const auto sol = solver_ptr_->getSolution();
+
+    if (!sol.valid) {
+      std::cerr << "[GlobalMapMatcher] TEASER++ returned invalid solution. Returning identity.\n";
+      return Sophus::SE3d{};
+    }
+
+    return Sophus::SE3d(Sophus::SO3d(sol.rotation), sol.translation);
+  } catch (const std::exception& e) {
+    std::cerr << "[GlobalMapMatcher] Exception in TEASER++ solve: " << e.what() << "\nReturning identity.\n";
+    return Sophus::SE3d{};
+  }
 }
 
 // --------------------------- Stubbed privates ----------------------------

@@ -96,7 +96,7 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
   enable_localization = node->declare_parameter<bool>("enable_localization", enable_localization);
   if (enable_localization) {
     map_frame = node->declare_parameter<std::string>("map_frame", map_frame);
-    localization_thread = std::jthread([this]() { localization_loop(); });
+    // localization_thread = std::jthread([this]() { localization_loop(); });
   }
 
   // lio params
@@ -316,15 +316,15 @@ void Node::registration_loop() {
           publish_lidar_accel(lio->lidar_state.linear_acceleration, end_stamp);
         }
 
-        if (enable_localization) {
-          std::unique_lock lock(localization_mutex);
-          registration_count++;
-          if (registration_count % global_reg_period == 0) {
-            localization_queue.emplace(deskewed_frame, lio->lidar_state.pose);
-            registration_count = 0;
-            localization_condition_variable.notify_one();
-          }
-        }
+        // if (enable_localization) {
+        //   std::unique_lock lock(localization_mutex);
+        //   registration_count++;
+        //   if (registration_count % global_reg_period == 0) {
+        //     localization_queue.emplace(deskewed_frame, lio->lidar_state.pose);
+        //     registration_count = 0;
+        //     localization_condition_variable.notify_one();
+        //   }
+        // }
       }
     } catch (const std::invalid_argument& ex) {
       RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error, dropping frame. Error: " << ex.what());
@@ -399,8 +399,26 @@ void Node::localization_loop() {
     lock.unlock();
 
     try {
-      SCOPED_PROFILER("ROS Global Localization");
-      const auto global_optimized_pose = lio->register_global_scan(scan, initial_guess);
+      const auto transform_map_to_odom = lio->register_global_scan(scan, initial_guess);
+
+      const std::string_view from_frame = odom_frame;
+      const std::string_view to_frame = map_frame;
+
+      geometry_msgs::msg::TransformStamped transform_msg;
+      transform_msg.header.stamp = node->now();
+
+      if (invert_odom_tf) {
+        transform_msg.header.frame_id = from_frame;
+        transform_msg.child_frame_id = to_frame;
+        transform_msg.transform = ros_utils::sophus_to_transform(transform_map_to_odom.inverse());
+      } else {
+        transform_msg.header.frame_id = to_frame;
+        transform_msg.child_frame_id = from_frame;
+        transform_msg.transform = ros_utils::sophus_to_transform(transform_map_to_odom);
+      }
+
+      std::cout << "Publishing map to odom transform: " << transform_map_to_odom.log().transpose() << std::endl;
+      tf_broadcaster->sendTransform(transform_msg);
 
     } catch (const std::invalid_argument& ex) {
       RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error during localization: " << ex.what());
