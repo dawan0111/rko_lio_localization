@@ -40,14 +40,16 @@ using Correspondences = tbb::concurrent_vector<OneCorrespondence>;
 
 class GlobalMapMatcher {
 public:
+  SparseVoxelGrid global_map;
+
   GlobalMapMatcher(const std::string& global_map_path,
                    const double voxel_size,
                    const double clipping_distance,
                    const unsigned int max_points_per_voxel)
-      : global_map_path_(global_map_path), global_map_(voxel_size, clipping_distance, max_points_per_voxel) {
+      : global_map_path_(global_map_path), global_map(voxel_size, clipping_distance, max_points_per_voxel) {
     initialize();
   };
-  Sophus::SE3d solve(const LidarFrame& lidar_frame);
+  Sophus::SE3d solve(const Correspondences& correspondences);
 
 private:
   void initialize();
@@ -56,6 +58,5 @@ private:
   std::unique_ptr<teaser::RobustRegistrationSolver> solver_ptr_;
   std::string global_map_path_;
   std::string lidar_tf_name_;
-  SparseVoxelGrid global_map_;
 };
 } // namespace rko_lio::core

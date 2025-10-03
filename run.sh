@@ -1,0 +1,1 @@
+os2 launch rko_lio odometry.launch.py config_file:=/home/kdw/rko-lio/default.yaml rviz:=true rviz_config_file:=/home/kdw/rko-lio/default.rviz

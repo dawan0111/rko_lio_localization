@@ -82,9 +82,9 @@ inline void transform_points(const Sophus::SE3d& T, Vector3dVector& points) {
 }
 
 template <typename Functor>
-  requires requires(Functor f, Secondsd stamp) {
-    { f(stamp) } -> std::same_as<Sophus::SE3d>;
-  }
+requires requires(Functor f, Secondsd stamp) {
+  { f(stamp) } -> std::same_as<Sophus::SE3d>;
+}
 std::tuple<Vector3dVector, Vector3dVector, Vector3dVector> preprocess_scan(const Vector3dVector& frame,
                                                                            const TimestampVector& timestamps,
                                                                            const Secondsd end_time,
@@ -505,6 +505,14 @@ Vector3dVector LIO::register_scan(const Sophus::SE3d& extrinsic_lidar2base,
   Vector3dVector frame = register_scan(transformed_scan, timestamps);
   transform_points(extrinsic_lidar2base.inverse(), frame);
   return frame;
+}
+
+Sophus::SE3d LIO::register_global_scan(const Vector3dVector& frame, const Sophus::SE3d& initial_guess) {
+  auto correction_guess = transform_map_to_odom * initial_guess;
+  const Correspondences& correspondences = data_association(initial_guess, frame, global_matcher.global_map, config);
+  auto global_optimize_pose = global_matcher.solve(correspondences);
+
+  return global_optimize_pose;
 }
 
 // ============================ logs ===============================

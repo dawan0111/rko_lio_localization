@@ -35,10 +35,15 @@ void GlobalMapMatcher::initialize() {
   std::transform(global_map_pointcloud.begin(), global_map_pointcloud.end(), points.begin(),
                  [&](const auto& pointcloud) { return Eigen::Vector3d(pointcloud.x, pointcloud.y, pointcloud.z); });
 
-  global_map_.AddPoints(points);
+  std::cout << "globalmap path: " << global_map_path_ << "\n";
+  std::cout << "Loaded " << points.size() << " points from global map.\n";
+  global_map.AddPoints(points);
 }
 
-Sophus::SE3d GlobalMapMatcher::solve(const LidarFrame& lidar_frame) {}
+Sophus::SE3d GlobalMapMatcher::solve(const Correspondences& correspondences) {
+  std::cout << "Solve not implemented yet.\n" << std::endl;
+  return Sophus::SE3d();
+}
 
 // --------------------------- Stubbed privates ----------------------------
 // These are placeholders to satisfy the linker; wire them up later.

@@ -18,7 +18,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USEsync_condition_variable OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
 
@@ -57,14 +57,21 @@ public:
   std::string base_frame;
   std::string odom_frame = "odom";
   std::string odom_topic = "/rko_lio/odometry";
+
+  std::string map_frame = "map";
+
   std::string map_topic = "/rko_lio/local_map";
   std::string results_dir = "results";
   std::string run_name = "rko_lio_run";
+
+  std::string global_map_topic = "/rko_lio/global_map";
 
   bool invert_odom_tf = false;
   bool publish_lidar_acceleration = false;
   bool publish_deskewed_scan = false;
   bool publish_local_map = false;
+  bool publish_global_map = true; // TODO: default False
+  bool enable_localization = true;
 
   Sophus::SE3d extrinsic_imu2base;
   Sophus::SE3d extrinsic_lidar2base;
@@ -77,6 +84,7 @@ public:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr frame_publisher;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_publisher;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr global_map_publisher;
   rclcpp::Publisher<geometry_msgs::msg::AccelStamped>::SharedPtr lidar_accel_publisher;
 
   // multithreading
@@ -93,6 +101,13 @@ public:
   std::queue<core::LidarFrame> lidar_buffer;
   size_t max_lidar_buffer_size = 50;
 
+  std::jthread localization_thread;
+  std::mutex localization_mutex;
+  size_t global_reg_period = 5;
+  size_t registration_count = 0;
+  std::queue<std::tuple<core::Vector3dVector, Sophus::SE3d>> localization_queue;
+  std::condition_variable localization_condition_variable;
+
   Node() = delete;
   Node(const std::string& node_name, const rclcpp::NodeOptions& options);
 
@@ -104,6 +119,8 @@ public:
   void publish_odometry(const core::State& state, const core::Secondsd& stamp) const;
   void publish_lidar_accel(const Eigen::Vector3d& acceleration, const core::Secondsd& stamp) const;
   void publish_map_loop();
+
+  void localization_loop();
 
   ~Node();
   Node(const Node&) = delete;

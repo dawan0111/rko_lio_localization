@@ -91,11 +91,13 @@ public:
 
   Config config;
   SparseVoxelGrid map;
-  GlobalMapMatcher global_matcher;
   State lidar_state;
   ImuBias imu_bias;
   Eigen::Vector3d mean_body_acceleration = Eigen::Vector3d::Zero();
   Eigen::Matrix3d body_acceleration_covariance = Eigen::Matrix3d::Identity();
+
+  GlobalMapMatcher global_matcher;
+  Sophus::SE3d transform_map_to_odom = Sophus::SE3d();
 
   IntervalStats interval_stats;
 
@@ -115,6 +117,8 @@ public:
   Vector3dVector register_scan(const Sophus::SE3d& extrinsic_lidar2base,
                                const Vector3dVector& scan,
                                const TimestampVector& timestamps);
+
+  Sophus::SE3d register_global_scan(const Vector3dVector& frame, const Sophus::SE3d& initial_guess);
 
   void dump_results_to_disk(const std::filesystem::path& results_dir, const std::string& run_name) const;
 

@@ -86,6 +86,19 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
     map_publish_thead = std::jthread([this]() { publish_map_loop(); });
   }
 
+  publish_global_map = node->declare_parameter<bool>("publish_global_map", publish_global_map);
+  if (publish_global_map) {
+    const rclcpp::QoS global_map_qos((rclcpp::SystemDefaultsQoS().keep_last(1).transient_local()));
+    global_map_topic = node->declare_parameter<std::string>("global_map_topic", "/rko_lio/global_map");
+    global_map_publisher = node->create_publisher<sensor_msgs::msg::PointCloud2>(global_map_topic, global_map_qos);
+  }
+
+  enable_localization = node->declare_parameter<bool>("enable_localization", enable_localization);
+  if (enable_localization) {
+    map_frame = node->declare_parameter<std::string>("map_frame", map_frame);
+    localization_thread = std::jthread([this]() { localization_loop(); });
+  }
+
   // lio params
   core::LIO::Config lio_config{};
   lio_config.deskew = node->declare_parameter<bool>("deskew", lio_config.deskew);
@@ -107,7 +120,18 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
   lio_config.max_expected_jerk = node->declare_parameter<double>("max_expected_jerk", lio_config.max_expected_jerk);
   lio_config.double_downsample = node->declare_parameter<bool>("double_downsample", lio_config.double_downsample);
   lio_config.min_beta = node->declare_parameter<double>("min_beta", lio_config.min_beta);
+  lio_config.global_map_path = node->declare_parameter<std::string>("global_map_path", lio_config.global_map_path);
+  lio_config.global_voxel_size = node->declare_parameter<double>("global_voxel_size", lio_config.global_voxel_size);
+
   lio = std::make_unique<core::LIO>(lio_config);
+
+  if (publish_global_map && enable_localization) {
+    std_msgs::msg::Header map_header;
+    map_header.stamp = node->now();
+    map_header.frame_id = map_frame;
+    global_map_publisher->publish(
+        ros_utils::eigen_to_point_cloud2(lio->global_matcher.global_map.Pointcloud(), map_header));
+  }
 
   // manually, if, define extrinsics
   parse_cli_extrinsics();
@@ -291,6 +315,16 @@ void Node::registration_loop() {
         if (publish_lidar_acceleration) {
           publish_lidar_accel(lio->lidar_state.linear_acceleration, end_stamp);
         }
+
+        if (enable_localization) {
+          std::unique_lock lock(localization_mutex);
+          registration_count++;
+          if (registration_count % global_reg_period == 0) {
+            localization_queue.emplace(deskewed_frame, lio->lidar_state.pose);
+            registration_count = 0;
+            localization_condition_variable.notify_one();
+          }
+        }
       }
     } catch (const std::invalid_argument& ex) {
       RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error, dropping frame. Error: " << ex.what());
@@ -349,6 +383,28 @@ void Node::publish_map_loop() {
     map_header.stamp = node->now();
     map_header.frame_id = odom_frame;
     map_publisher->publish(ros_utils::eigen_to_point_cloud2(map_points, map_header));
+  }
+}
+
+void Node::localization_loop() {
+  while (atomic_node_running) {
+    std::unique_lock lock(localization_mutex);
+    localization_condition_variable.wait(lock,
+                                         [this]() { return !atomic_node_running || !localization_queue.empty(); });
+    if (!atomic_node_running) {
+      break;
+    }
+    const auto& [scan, initial_guess] = localization_queue.front();
+    localization_queue.pop();
+    lock.unlock();
+
+    try {
+      SCOPED_PROFILER("ROS Global Localization");
+      const auto global_optimized_pose = lio->register_global_scan(scan, initial_guess);
+
+    } catch (const std::invalid_argument& ex) {
+      RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error during localization: " << ex.what());
+    }
   }
 }
 
