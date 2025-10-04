@@ -51,6 +51,11 @@ inline geometry_msgs::msg::Pose sophus_to_pose(const Sophus::SE3d& T) {
   return t;
 }
 
+inline Sophus::SE3d pose_to_sophus(const geometry_msgs::msg::Pose& pose) {
+  return {Eigen::Quaterniond(pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z),
+          Eigen::Vector3d(pose.position.x, pose.position.y, pose.position.z)};
+}
+
 inline geometry_msgs::msg::Transform sophus_to_transform(const Sophus::SE3d& T) {
   geometry_msgs::msg::Transform t;
   t.translation.x = T.translation().x();

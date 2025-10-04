@@ -406,9 +406,7 @@ void LIO::add_imu_measurement(const Sophus::SE3d& extrinsic_imu2base, const ImuC
 
 // ============================ lidar ===============================
 
-Vector3dVector LIO::register_scan(const Vector3dVector& scan,
-                                  const TimestampVector& timestamps,
-                                  const Sophus::SE3d& transform_map_to_odom) {
+Vector3dVector LIO::register_scan(const Vector3dVector& scan, const TimestampVector& timestamps) {
   const auto max = std::max_element(timestamps.cbegin(), timestamps.cend());
   const Secondsd current_lidar_time = *max;
 
@@ -454,8 +452,7 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan,
     return Sophus::SE3d::exp(tau);
   };
 
-  const Sophus::SE3d initial_guess =
-      transform_map_to_odom * lidar_state.pose * relative_pose_at_time(current_lidar_time);
+  const Sophus::SE3d initial_guess = lidar_state.pose * relative_pose_at_time(current_lidar_time);
 
   // body acceleration filter
   const auto& accel_filter_info = get_accel_info(initial_guess.so3(), current_lidar_time);
@@ -509,15 +506,14 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan,
 
 Vector3dVector LIO::register_scan(const Sophus::SE3d& extrinsic_lidar2base,
                                   const Vector3dVector& scan,
-                                  const TimestampVector& timestamps,
-                                  const Sophus::SE3d& transform_map_to_odom) {
+                                  const TimestampVector& timestamps) {
   if (extrinsic_lidar2base.log().norm() < EPSILON) {
-    return register_scan(scan, timestamps, transform_map_to_odom);
+    return register_scan(scan, timestamps);
   }
 
   Vector3dVector transformed_scan = scan;
   transform_points(extrinsic_lidar2base, transformed_scan);
-  Vector3dVector frame = register_scan(transformed_scan, timestamps, transform_map_to_odom);
+  Vector3dVector frame = register_scan(transformed_scan, timestamps);
   transform_points(extrinsic_lidar2base.inverse(), frame);
   return frame;
 }
@@ -606,4 +602,22 @@ void LIO::dump_results_to_disk(const std::filesystem::path& results_dir, const s
     std::cerr << "[WARNING] Cannot write files to disk, encountered filesystem error: " << ex.what() << "\n";
   }
 }
+
+void LIO::reset(const Sophus::SE3d& initial_pose) {
+  lidar_state = State();
+  lidar_state.pose = initial_pose;
+  imu_bias = ImuBias();
+  mean_body_acceleration = Eigen::Vector3d::Zero();
+  body_acceleration_covariance = Eigen::Matrix3d::Identity();
+  map.Clear();
+  _initialized = false;
+  interval_stats.reset();
+  _poses_with_timestamps.clear();
+  _imu_local_rotation = Sophus::SO3d();
+  _imu_local_rotation_time = Secondsd(0);
+  _last_real_imu_time = Secondsd(0);
+  _last_real_base_imu_ang_vel = Eigen::Vector3d::Zero();
+  std::cout << "LIO state has been reset.\n";
+}
+
 } // namespace rko_lio::core

@@ -99,6 +99,9 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
   if (enable_localization) {
     // map_frame = node->declare_parameter<std::string>("map_frame", map_frame);
     // localization_thread = std::jthread([this]() { localization_loop(); });
+    initial_pose_subscription = node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "/initialpose", rclcpp::SystemDefaultsQoS(),
+        std::bind(&Node::initial_pose_callback, this, std::placeholders::_1));
   }
 
   // lio params
@@ -201,6 +204,23 @@ bool Node::check_and_set_extrinsics() {
   return true;
 }
 
+void Node::initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg) {
+  if (!enable_localization) {
+    RCLCPP_WARN_STREAM_ONCE(node->get_logger(),
+                            "Received initial pose, but localization is disabled. Ignoring the message.");
+    return;
+  }
+  Sophus::SE3d initial_pose = ros_utils::pose_to_sophus(msg->pose.pose);
+  auto sp = std::make_shared<const Sophus::SE3d>(std::move(initial_pose));
+
+  std::atomic_store(&latest_map_to_odom, sp);
+  initial_pose_set = true;
+  initialized_pose_once = true;
+
+  std::lock_guard lock(buffer_mutex);
+  RCLCPP_INFO_STREAM(node->get_logger(), "Set initial pose to: " << initial_pose.log().transpose());
+}
+
 void Node::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr& imu_msg) {
   if (imu_frame.empty()) {
     if (imu_msg->header.frame_id.empty() && !extrinsics_set) {
@@ -297,16 +317,28 @@ void Node::registration_loop() {
     buffer_lock.unlock(); // we dont touch the buffers anymore
 
     try {
-      auto map_to_odom = Sophus::SE3d();
-      if (auto sp = std::atomic_load(&latest_map_to_odom)) {
-        map_to_odom = *sp;
+      if (!initialized_pose_once && enable_localization) {
+        RCLCPP_WARN_STREAM_ONCE(
+            node->get_logger(),
+            "Waiting for initial pose to be set through /initialpose topic. Use rviz to set the initial pose.");
+        continue;
       }
+
+      if (initial_pose_set && enable_localization) {
+        auto sp = std::atomic_load(&latest_map_to_odom);
+        auto map_to_odom = *sp;
+
+        initial_pose_set = false;
+        lio->reset(map_to_odom);
+        continue;
+      }
+
       const core::Vector3dVector deskewed_frame = std::invoke([&]() {
         if (publish_local_map) {
           std::lock_guard lock(local_map_mutex); // publish_map thread might access simultaneously
-          return lio->register_scan(extrinsic_lidar2base, scan, timestamps, map_to_odom);
+          return lio->register_scan(extrinsic_lidar2base, scan, timestamps);
         } else {
-          return lio->register_scan(extrinsic_lidar2base, scan, timestamps, map_to_odom);
+          return lio->register_scan(extrinsic_lidar2base, scan, timestamps);
         }
       });
 
@@ -323,15 +355,15 @@ void Node::registration_loop() {
           publish_lidar_accel(lio->lidar_state.linear_acceleration, end_stamp);
         }
 
-        if (enable_localization) {
-          std::unique_lock lock(localization_mutex);
-          if (registration_count % global_reg_period == 0) {
-            localization_queue.emplace(deskewed_frame, lio->lidar_state.pose, end_stamp);
-            registration_count = 0;
-            localization_condition_variable.notify_one();
-          }
-          registration_count++;
-        }
+        // if (enable_localization) {
+        //   std::unique_lock lock(localization_mutex);
+        //   if (registration_count % global_reg_period == 0) {
+        //     localization_queue.emplace(deskewed_frame, lio->lidar_state.pose, end_stamp);
+        //     registration_count = 0;
+        //     localization_condition_variable.notify_one();
+        //   }
+        //   registration_count++;
+        // }
       }
     } catch (const std::invalid_argument& ex) {
       RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error, dropping frame. Error: " << ex.what());
@@ -367,21 +399,20 @@ void Node::publish_odometry(const core::State& state, const core::Secondsd& stam
   ros_utils::eigen_vector3d_to_ros_xyz(state.angular_velocity, odom_msg.twist.twist.angular);
   odom_publisher->publish(odom_msg);
 
-  // if (auto sp = std::atomic_load(&latest_map_to_odom)) {
-  //   geometry_msgs::msg::TransformStamped tf_map_odom;
-  //   tf_map_odom.header = transform_msg.header;
+  geometry_msgs::msg::TransformStamped tf_map_odom;
+  tf_map_odom.header = transform_msg.header;
 
-  //   if (invert_odom_tf) {
-  //     tf_map_odom.header.frame_id = odom_frame; // from_frame
-  //     tf_map_odom.child_frame_id = map_frame;   // to_frame
-  //     tf_map_odom.transform = ros_utils::sophus_to_transform(sp->inverse());
-  //   } else {
-  //     tf_map_odom.header.frame_id = map_frame;
-  //     tf_map_odom.child_frame_id = odom_frame;
-  //     tf_map_odom.transform = ros_utils::sophus_to_transform(*sp);
-  //   }
-  //   tf_broadcaster->sendTransform(tf_map_odom);
-  // }
+  if (invert_odom_tf) {
+    tf_map_odom.header.frame_id = odom_frame; // from_frame
+    tf_map_odom.child_frame_id = map_frame;   // to_frame
+    tf_map_odom.transform = ros_utils::sophus_to_transform(Sophus::SE3d());
+  } else {
+    tf_map_odom.header.frame_id = map_frame;
+    tf_map_odom.child_frame_id = odom_frame;
+    tf_map_odom.transform = ros_utils::sophus_to_transform(Sophus::SE3d());
+  }
+
+  tf_broadcaster->sendTransform(tf_map_odom);
 }
 
 void Node::publish_lidar_accel(const Eigen::Vector3d& acceleration, const core::Secondsd& stamp) const {
@@ -410,32 +441,32 @@ void Node::publish_map_loop() {
 }
 
 void Node::localization_loop() {
-  while (atomic_node_running) {
-    std::unique_lock lock(localization_mutex);
-    localization_condition_variable.wait(lock,
-                                         [this]() { return !atomic_node_running || !localization_queue.empty(); });
-    if (!atomic_node_running) {
-      break;
-    }
-    auto item = std::move(localization_queue.front());
-    localization_queue.pop();
-    lock.unlock();
+  // while (atomic_node_running) {
+  //   std::unique_lock lock(localization_mutex);
+  //   localization_condition_variable.wait(lock,
+  //                                        [this]() { return !atomic_node_running || !localization_queue.empty(); });
+  //   if (!atomic_node_running) {
+  //     break;
+  //   }
+  //   auto item = std::move(localization_queue.front());
+  //   localization_queue.pop();
+  //   lock.unlock();
 
-    auto [scan, initial_guess, stamp] = std::move(item);
+  //   auto [scan, initial_guess, stamp] = std::move(item);
 
-    try {
-      const Sophus::SE3d T_mo_cur = *std::atomic_load(&latest_map_to_odom);
-      Sophus::SE3d map_to_odom = lio->register_global_scan(T_mo_cur, extrinsic_lidar2base, scan, initial_guess);
-      // transform_map_to_odom dummy
-      // Sophus::SE3d transform_map_to_odom = extrinsic_lidar2base.inverse();
+  //   try {
+  //     const Sophus::SE3d T_mo_cur = *std::atomic_load(&latest_map_to_odom);
+  //     Sophus::SE3d map_to_odom = lio->register_global_scan(T_mo_cur, extrinsic_lidar2base, scan, initial_guess);
+  //     // transform_map_to_odom dummy
+  //     // Sophus::SE3d transform_map_to_odom = extrinsic_lidar2base.inverse();
 
-      auto sp = std::make_shared<const Sophus::SE3d>(std::move(map_to_odom));
-      std::atomic_store(&latest_map_to_odom, sp);
+  //     auto sp = std::make_shared<const Sophus::SE3d>(std::move(map_to_odom));
+  //     std::atomic_store(&latest_map_to_odom, sp);
 
-    } catch (const std::invalid_argument& ex) {
-      RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error during localization: " << ex.what());
-    }
-  }
+  //   } catch (const std::invalid_argument& ex) {
+  //     RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error during localization: " << ex.what());
+  //   }
+  // }
 }
 
 Node::~Node() {

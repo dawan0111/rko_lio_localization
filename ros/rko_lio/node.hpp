@@ -35,6 +35,7 @@
 // ros
 #include <geometry_msgs/msg/accel_stamped.hpp>
 #include <geometry_msgs/msg/accel_with_covariance_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/node_options.hpp>
@@ -58,7 +59,7 @@ public:
   std::string odom_frame = "odom";
   std::string odom_topic = "/rko_lio/odometry";
 
-  std::string map_frame = "odom";
+  std::string map_frame = "map";
 
   std::string map_topic = "/rko_lio/local_map";
   std::string results_dir = "results";
@@ -80,6 +81,8 @@ public:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
+
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_subscription;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr frame_publisher;
@@ -108,7 +111,8 @@ public:
 
   size_t global_reg_period = 50;
   size_t registration_count = 0;
-  Sophus::SE3d transform_map_to_odom = Sophus::SE3d();
+  bool initial_pose_set = false;
+  bool initialized_pose_once = false;
   std::shared_ptr<const Sophus::SE3d> latest_map_to_odom;
   std::queue<std::tuple<core::Vector3dVector, Sophus::SE3d, core::Secondsd>> localization_queue;
   std::condition_variable localization_condition_variable;
@@ -118,6 +122,7 @@ public:
 
   void parse_cli_extrinsics();
   bool check_and_set_extrinsics();
+  void initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg);
   void imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr& imu_msg);
   void lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& lidar_msg);
   void registration_loop();

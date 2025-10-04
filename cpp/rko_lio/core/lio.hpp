@@ -111,14 +111,11 @@ public:
   void add_imu_measurement(const Sophus::SE3d& extrinsic_imu2base, const ImuControl& raw_imu);
 
   // returns deskewed (only using initial motion guess) and clipped scan
-  Vector3dVector register_scan(const Vector3dVector& scan,
-                               const TimestampVector& timestamps,
-                               const Sophus::SE3d& transform_map_to_odom);
+  Vector3dVector register_scan(const Vector3dVector& scan, const TimestampVector& timestamps);
   // Pre-transform cloud by extrinsic - lidar to base. The return is still in the original frame
   Vector3dVector register_scan(const Sophus::SE3d& extrinsic_lidar2base,
                                const Vector3dVector& scan,
-                               const TimestampVector& timestamps,
-                               const Sophus::SE3d& transform_map_to_odom);
+                               const TimestampVector& timestamps);
 
   Sophus::SE3d register_global_scan(const Sophus::SE3d& transform_map_to_odom,
                                     const Sophus::SE3d& extrinsic_lidar2base,
@@ -126,6 +123,7 @@ public:
                                     const Sophus::SE3d& initial_guess);
 
   void dump_results_to_disk(const std::filesystem::path& results_dir, const std::string& run_name) const;
+  void reset(const Sophus::SE3d& initial_pose);
 
 private:
   void initialize(const Secondsd lidar_time);
