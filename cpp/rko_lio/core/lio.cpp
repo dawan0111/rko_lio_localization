@@ -453,8 +453,7 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan,
     return Sophus::SE3d::exp(tau);
   };
 
-  const Sophus::SE3d initial_guess =
-      transform_map_to_odom * lidar_state.pose * relative_pose_at_time(current_lidar_time);
+  const Sophus::SE3d initial_guess = lidar_state.pose * relative_pose_at_time(current_lidar_time);
 
   // body acceleration filter
   const auto& accel_filter_info = get_accel_info(initial_guess.so3(), current_lidar_time);
@@ -465,23 +464,24 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan,
 
   if (!map.Empty()) {
     SCOPED_PROFILER("ICP");
-    const Sophus::SE3d optimized_pose =
-        icp(keypoints, global_matcher.global_map, initial_guess, config, accel_filter_info);
+    const Sophus::SE3d optimized_pose = icp(keypoints, map, initial_guess, config, accel_filter_info);
+    const Sophus::SE3d global_optimized_pose =
+        icp(keypoints, global_matcher.global_map, optimized_pose, config, accel_filter_info);
 
     // estimate velocities and accelerations from the new pose
     const double dt = (current_lidar_time - lidar_state.time).count();
-    const Sophus::SE3d motion = lidar_state.pose.inverse() * optimized_pose;
+    const Sophus::SE3d motion = lidar_state.pose.inverse() * global_optimized_pose;
     const Eigen::Vector6d local_velocity = motion.log() / dt;
     const Eigen::Vector3d local_linear_acceleration =
         (local_velocity.head<3>() - motion.so3().inverse() * lidar_state.velocity) / dt;
 
     // update
-    lidar_state.pose = optimized_pose;
+    lidar_state.pose = global_optimized_pose;
     lidar_state.velocity = local_velocity.head<3>();
     lidar_state.angular_velocity = local_velocity.tail<3>();
     lidar_state.linear_acceleration = local_linear_acceleration;
 
-    _imu_local_rotation = optimized_pose.so3(); // correct the drift in imu integration
+    _imu_local_rotation = global_optimized_pose.so3(); // correct the drift in imu integration
   }
   // even if map is empty, time should still update
   lidar_state.time = current_lidar_time;
@@ -517,7 +517,7 @@ Sophus::SE3d LIO::register_global_scan(const Sophus::SE3d& transform_map_to_odom
                                        const Vector3dVector& frame,
                                        const Sophus::SE3d& initial_guess) {
   auto transform_map_to_base = transform_map_to_odom * initial_guess;
-  auto down_sampled_frame = voxel_down_sample(frame, config.global_voxel_size);
+  auto down_sampled_frame = voxel_down_sample(frame, config.global_voxel_size * 1.5);
 
   Vector3dVector transformed_scan = down_sampled_frame;
   transform_points(extrinsic_lidar2base, transformed_scan);
@@ -525,7 +525,7 @@ Sophus::SE3d LIO::register_global_scan(const Sophus::SE3d& transform_map_to_odom
   const Correspondences& correspondences =
       data_association(transform_map_to_base, transformed_scan, global_matcher.global_map, config);
 
-  if (correspondences.size() < 3) {
+  if (correspondences.size() < 50) {
     std::cout << "[WARNING] Not enough correspondences, keep previous map->odom.\n";
     return transform_map_to_odom;
   }
@@ -536,7 +536,14 @@ Sophus::SE3d LIO::register_global_scan(const Sophus::SE3d& transform_map_to_odom
     return transform_map_to_odom;
   }
 
-  return transform_map_to_optimize * initial_guess.inverse();
+  // ----- 여기서부터 '일정 비율(α)'만 업데이트 -----
+  // config.global_reg_alpha ∈ [0,1] (예: 0.3면 30%만 반영)
+  const double alpha = std::clamp(1.0, 0.0, 1.0);
+  const Sophus::SE3d delta = transform_map_to_base.inverse() * transform_map_to_optimize;
+  const Sophus::SE3d delta_alpha = Sophus::SE3d::exp(alpha * delta.log());
+  const Sophus::SE3d transform_map_to_partial = delta_alpha * transform_map_to_base;
+
+  return transform_map_to_partial * initial_guess.inverse();
 }
 
 // ============================ logs ===============================

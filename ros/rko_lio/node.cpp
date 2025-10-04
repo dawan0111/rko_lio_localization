@@ -97,8 +97,8 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
 
   enable_localization = node->declare_parameter<bool>("enable_localization", enable_localization);
   if (enable_localization) {
-    map_frame = node->declare_parameter<std::string>("map_frame", map_frame);
-    localization_thread = std::jthread([this]() { localization_loop(); });
+    // map_frame = node->declare_parameter<std::string>("map_frame", map_frame);
+    // localization_thread = std::jthread([this]() { localization_loop(); });
   }
 
   // lio params

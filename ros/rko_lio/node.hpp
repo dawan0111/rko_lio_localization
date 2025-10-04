@@ -58,7 +58,7 @@ public:
   std::string odom_frame = "odom";
   std::string odom_topic = "/rko_lio/odometry";
 
-  std::string map_frame = "map";
+  std::string map_frame = "odom";
 
   std::string map_topic = "/rko_lio/local_map";
   std::string results_dir = "results";

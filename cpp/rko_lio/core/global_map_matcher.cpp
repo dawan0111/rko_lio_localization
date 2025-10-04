@@ -91,6 +91,14 @@ Sophus::SE3d GlobalMapMatcher::solve(const Sophus::SE3d& transform_map_to_base,
 
   try {
     solver.solve(src, tgt);
+
+    auto rotation_inlier = solver.getRotationInliers();
+    auto translation_inlier = solver.getTranslationInliers();
+    int inlier_size_mean = (static_cast<int>(rotation_inlier.size()) + static_cast<int>(translation_inlier.size())) / 2;
+    auto inlier_ratio = static_cast<double>(inlier_size_mean) / static_cast<double>(N);
+    std::cout << "[GlobalMapMatcher] TEASER++ found " << rotation_inlier.size() << " rotation inliers, "
+              << translation_inlier.size() << " translation inliers. Mean inlier ratio: " << inlier_ratio << "\n";
+
     const auto sol = solver.getSolution();
 
     if (!sol.valid) {
