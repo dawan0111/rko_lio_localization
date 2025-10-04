@@ -87,6 +87,7 @@ public:
 
     double global_voxel_size = 0.1;
     std::string global_map_path = "";
+    bool enable_localization = false;
   };
 
   Config config;

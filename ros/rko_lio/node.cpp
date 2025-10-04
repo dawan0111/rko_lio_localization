@@ -124,10 +124,11 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
   lio_config.min_beta = node->declare_parameter<double>("min_beta", lio_config.min_beta);
   lio_config.global_map_path = node->declare_parameter<std::string>("global_map_path", lio_config.global_map_path);
   lio_config.global_voxel_size = node->declare_parameter<double>("global_voxel_size", lio_config.global_voxel_size);
+  lio_config.enable_localization = enable_localization;
 
   lio = std::make_unique<core::LIO>(lio_config);
 
-  if (publish_global_map && enable_localization) {
+  if (publish_global_map) {
     std_msgs::msg::Header map_header;
     map_header.stamp = node->now();
     map_header.frame_id = map_frame;
@@ -366,21 +367,21 @@ void Node::publish_odometry(const core::State& state, const core::Secondsd& stam
   ros_utils::eigen_vector3d_to_ros_xyz(state.angular_velocity, odom_msg.twist.twist.angular);
   odom_publisher->publish(odom_msg);
 
-  if (auto sp = std::atomic_load(&latest_map_to_odom)) {
-    geometry_msgs::msg::TransformStamped tf_map_odom;
-    tf_map_odom.header = transform_msg.header;
+  // if (auto sp = std::atomic_load(&latest_map_to_odom)) {
+  //   geometry_msgs::msg::TransformStamped tf_map_odom;
+  //   tf_map_odom.header = transform_msg.header;
 
-    if (invert_odom_tf) {
-      tf_map_odom.header.frame_id = odom_frame; // from_frame
-      tf_map_odom.child_frame_id = map_frame;   // to_frame
-      tf_map_odom.transform = ros_utils::sophus_to_transform(sp->inverse());
-    } else {
-      tf_map_odom.header.frame_id = map_frame;
-      tf_map_odom.child_frame_id = odom_frame;
-      tf_map_odom.transform = ros_utils::sophus_to_transform(*sp);
-    }
-    tf_broadcaster->sendTransform(tf_map_odom);
-  }
+  //   if (invert_odom_tf) {
+  //     tf_map_odom.header.frame_id = odom_frame; // from_frame
+  //     tf_map_odom.child_frame_id = map_frame;   // to_frame
+  //     tf_map_odom.transform = ros_utils::sophus_to_transform(sp->inverse());
+  //   } else {
+  //     tf_map_odom.header.frame_id = map_frame;
+  //     tf_map_odom.child_frame_id = odom_frame;
+  //     tf_map_odom.transform = ros_utils::sophus_to_transform(*sp);
+  //   }
+  //   tf_broadcaster->sendTransform(tf_map_odom);
+  // }
 }
 
 void Node::publish_lidar_accel(const Eigen::Vector3d& acceleration, const core::Secondsd& stamp) const {

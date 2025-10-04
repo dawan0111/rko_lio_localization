@@ -207,6 +207,7 @@ Sophus::SE3d icp(const Vector3dVector& frame,
   for (size_t i = 0; i < config.max_iterations; ++i) {
 
     const Correspondences& correspondences = data_association(current_pose, frame, voxel_map, config);
+
     if (correspondences.empty()) {
       throw std::runtime_error("Number of correspondences are 0.");
     }
@@ -453,7 +454,8 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan,
     return Sophus::SE3d::exp(tau);
   };
 
-  const Sophus::SE3d initial_guess = lidar_state.pose * relative_pose_at_time(current_lidar_time);
+  const Sophus::SE3d initial_guess =
+      transform_map_to_odom * lidar_state.pose * relative_pose_at_time(current_lidar_time);
 
   // body acceleration filter
   const auto& accel_filter_info = get_accel_info(initial_guess.so3(), current_lidar_time);
@@ -464,24 +466,32 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan,
 
   if (!map.Empty()) {
     SCOPED_PROFILER("ICP");
-    const Sophus::SE3d optimized_pose = icp(keypoints, map, initial_guess, config, accel_filter_info);
-    const Sophus::SE3d global_optimized_pose =
-        icp(keypoints, global_matcher.global_map, optimized_pose, config, accel_filter_info);
+    Sophus::SE3d optimized_pose = initial_guess;
+
+    // if (config.enable_localization) {
+    //   const Correspondences& global_correspondences =
+    //       data_association(optimized_pose, keypoints, global_matcher.global_map, config);
+    //   optimized_pose = global_matcher.solve(optimized_pose, global_correspondences);
+    // }
+    optimized_pose = icp(keypoints, map, optimized_pose, config, accel_filter_info);
+    if (config.enable_localization) {
+      optimized_pose = icp(keypoints, global_matcher.global_map, optimized_pose, config, accel_filter_info);
+    }
 
     // estimate velocities and accelerations from the new pose
     const double dt = (current_lidar_time - lidar_state.time).count();
-    const Sophus::SE3d motion = lidar_state.pose.inverse() * global_optimized_pose;
+    const Sophus::SE3d motion = lidar_state.pose.inverse() * optimized_pose;
     const Eigen::Vector6d local_velocity = motion.log() / dt;
     const Eigen::Vector3d local_linear_acceleration =
         (local_velocity.head<3>() - motion.so3().inverse() * lidar_state.velocity) / dt;
 
     // update
-    lidar_state.pose = global_optimized_pose;
+    lidar_state.pose = optimized_pose;
     lidar_state.velocity = local_velocity.head<3>();
     lidar_state.angular_velocity = local_velocity.tail<3>();
     lidar_state.linear_acceleration = local_linear_acceleration;
 
-    _imu_local_rotation = global_optimized_pose.so3(); // correct the drift in imu integration
+    _imu_local_rotation = optimized_pose.so3(); // correct the drift in imu integration
   }
   // even if map is empty, time should still update
   lidar_state.time = current_lidar_time;
