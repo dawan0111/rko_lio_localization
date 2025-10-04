@@ -40,7 +40,8 @@ void GlobalMapMatcher::initialize() {
   global_map.AddPoints(points);
 }
 
-Sophus::SE3d GlobalMapMatcher::solve(const Correspondences& correspondences) {
+Sophus::SE3d GlobalMapMatcher::solve(const Sophus::SE3d& transform_map_to_base,
+                                     const Correspondences& correspondences) {
   const std::size_t N = correspondences.size();
   if (N < 3) {
     std::cerr << "[GlobalMapMatcher] Not enough correspondences (" << N << "). Returning identity.\n";
@@ -52,20 +53,54 @@ Sophus::SE3d GlobalMapMatcher::solve(const Correspondences& correspondences) {
 
   tbb::parallel_for(std::size_t{0}, N, [&](std::size_t i) {
     const auto& c = correspondences[i];
-    src.col(i) = c.first;
+    src.col(i) = transform_map_to_base * c.first;
     tgt.col(i) = c.second;
   });
 
+  std::vector<double> errors;
+  errors.reserve(N);
+  for (int i = 0; i < N; ++i) {
+    double err = (src.col(i) - tgt.col(i)).norm();
+    errors.push_back(err);
+  }
+
+  // mean
+  double mean = std::accumulate(errors.begin(), errors.end(), 0.0) / errors.size();
+
+  // median
+  std::vector<double> tmp = errors;
+  std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
+  double median = tmp[tmp.size() / 2];
+
+  // max
+  double max_err = *std::max_element(errors.begin(), errors.end());
+
+  std::cout << "[correspondences] N=" << errors.size() << " mean=" << mean << " median=" << median << " max=" << max_err
+            << std::endl;
+
+  teaser::RobustRegistrationSolver::Params params;
+  params.noise_bound = mean; // Δ=voxel, 최소 3cm
+  params.cbar2 = 3.0;
+  params.estimate_scaling = false;
+  params.rotation_max_iterations = 150;
+  params.rotation_gnc_factor = 1.4;
+  params.rotation_estimation_algorithm = teaser::RobustRegistrationSolver::ROTATION_ESTIMATION_ALGORITHM::QUATRO;
+  params.rotation_cost_threshold = 1e-6; // 더 촘촘한 수렴
+
+  auto solver = teaser::RobustRegistrationSolver(params);
+
   try {
-    solver_ptr_->solve(src, tgt);
-    const auto sol = solver_ptr_->getSolution();
+    solver.solve(src, tgt);
+    const auto sol = solver.getSolution();
 
     if (!sol.valid) {
       std::cerr << "[GlobalMapMatcher] TEASER++ returned invalid solution. Returning identity.\n";
       return Sophus::SE3d{};
+    } else {
+      std::cout << "[GlobalMapMatcher] TEASER++ returned valid solution.\n";
     }
 
-    return Sophus::SE3d(Sophus::SO3d(sol.rotation), sol.translation);
+    return Sophus::SE3d(Sophus::SO3d(sol.rotation), sol.translation) * transform_map_to_base;
   } catch (const std::exception& e) {
     std::cerr << "[GlobalMapMatcher] Exception in TEASER++ solve: " << e.what() << "\nReturning identity.\n";
     return Sophus::SE3d{};

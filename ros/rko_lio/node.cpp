@@ -63,6 +63,8 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
   tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
   tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(*node);
 
+  latest_map_to_odom = std::make_shared<Sophus::SE3d>(Sophus::SE3d());
+
   // publishing
   const rclcpp::QoS publisher_qos((rclcpp::SystemDefaultsQoS().keep_last(1).durability_volatile()));
   odom_publisher = node->create_publisher<nav_msgs::msg::Odometry>(odom_topic, publisher_qos);
@@ -96,7 +98,7 @@ Node::Node(const std::string& node_name, const rclcpp::NodeOptions& options) {
   enable_localization = node->declare_parameter<bool>("enable_localization", enable_localization);
   if (enable_localization) {
     map_frame = node->declare_parameter<std::string>("map_frame", map_frame);
-    // localization_thread = std::jthread([this]() { localization_loop(); });
+    localization_thread = std::jthread([this]() { localization_loop(); });
   }
 
   // lio params
@@ -294,12 +296,16 @@ void Node::registration_loop() {
     buffer_lock.unlock(); // we dont touch the buffers anymore
 
     try {
+      auto map_to_odom = Sophus::SE3d();
+      if (auto sp = std::atomic_load(&latest_map_to_odom)) {
+        map_to_odom = *sp;
+      }
       const core::Vector3dVector deskewed_frame = std::invoke([&]() {
         if (publish_local_map) {
           std::lock_guard lock(local_map_mutex); // publish_map thread might access simultaneously
-          return lio->register_scan(extrinsic_lidar2base, scan, timestamps);
+          return lio->register_scan(extrinsic_lidar2base, scan, timestamps, map_to_odom);
         } else {
-          return lio->register_scan(extrinsic_lidar2base, scan, timestamps);
+          return lio->register_scan(extrinsic_lidar2base, scan, timestamps, map_to_odom);
         }
       });
 
@@ -316,15 +322,15 @@ void Node::registration_loop() {
           publish_lidar_accel(lio->lidar_state.linear_acceleration, end_stamp);
         }
 
-        // if (enable_localization) {
-        //   std::unique_lock lock(localization_mutex);
-        //   registration_count++;
-        //   if (registration_count % global_reg_period == 0) {
-        //     localization_queue.emplace(deskewed_frame, lio->lidar_state.pose);
-        //     registration_count = 0;
-        //     localization_condition_variable.notify_one();
-        //   }
-        // }
+        if (enable_localization) {
+          std::unique_lock lock(localization_mutex);
+          if (registration_count % global_reg_period == 0) {
+            localization_queue.emplace(deskewed_frame, lio->lidar_state.pose, end_stamp);
+            registration_count = 0;
+            localization_condition_variable.notify_one();
+          }
+          registration_count++;
+        }
       }
     } catch (const std::invalid_argument& ex) {
       RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error, dropping frame. Error: " << ex.what());
@@ -359,6 +365,22 @@ void Node::publish_odometry(const core::State& state, const core::Secondsd& stam
   ros_utils::eigen_vector3d_to_ros_xyz(state.velocity, odom_msg.twist.twist.linear);
   ros_utils::eigen_vector3d_to_ros_xyz(state.angular_velocity, odom_msg.twist.twist.angular);
   odom_publisher->publish(odom_msg);
+
+  if (auto sp = std::atomic_load(&latest_map_to_odom)) {
+    geometry_msgs::msg::TransformStamped tf_map_odom;
+    tf_map_odom.header = transform_msg.header;
+
+    if (invert_odom_tf) {
+      tf_map_odom.header.frame_id = odom_frame; // from_frame
+      tf_map_odom.child_frame_id = map_frame;   // to_frame
+      tf_map_odom.transform = ros_utils::sophus_to_transform(sp->inverse());
+    } else {
+      tf_map_odom.header.frame_id = map_frame;
+      tf_map_odom.child_frame_id = odom_frame;
+      tf_map_odom.transform = ros_utils::sophus_to_transform(*sp);
+    }
+    tf_broadcaster->sendTransform(tf_map_odom);
+  }
 }
 
 void Node::publish_lidar_accel(const Eigen::Vector3d& acceleration, const core::Secondsd& stamp) const {
@@ -394,31 +416,20 @@ void Node::localization_loop() {
     if (!atomic_node_running) {
       break;
     }
-    const auto& [scan, initial_guess] = localization_queue.front();
+    auto item = std::move(localization_queue.front());
     localization_queue.pop();
     lock.unlock();
 
+    auto [scan, initial_guess, stamp] = std::move(item);
+
     try {
-      const auto transform_map_to_odom = lio->register_global_scan(scan, initial_guess);
+      const Sophus::SE3d T_mo_cur = *std::atomic_load(&latest_map_to_odom);
+      Sophus::SE3d map_to_odom = lio->register_global_scan(T_mo_cur, extrinsic_lidar2base, scan, initial_guess);
+      // transform_map_to_odom dummy
+      // Sophus::SE3d transform_map_to_odom = extrinsic_lidar2base.inverse();
 
-      const std::string_view from_frame = odom_frame;
-      const std::string_view to_frame = map_frame;
-
-      geometry_msgs::msg::TransformStamped transform_msg;
-      transform_msg.header.stamp = node->now();
-
-      if (invert_odom_tf) {
-        transform_msg.header.frame_id = from_frame;
-        transform_msg.child_frame_id = to_frame;
-        transform_msg.transform = ros_utils::sophus_to_transform(transform_map_to_odom.inverse());
-      } else {
-        transform_msg.header.frame_id = to_frame;
-        transform_msg.child_frame_id = from_frame;
-        transform_msg.transform = ros_utils::sophus_to_transform(transform_map_to_odom);
-      }
-
-      std::cout << "Publishing map to odom transform: " << transform_map_to_odom.log().transpose() << std::endl;
-      tf_broadcaster->sendTransform(transform_msg);
+      auto sp = std::make_shared<const Sophus::SE3d>(std::move(map_to_odom));
+      std::atomic_store(&latest_map_to_odom, sp);
 
     } catch (const std::invalid_argument& ex) {
       RCLCPP_ERROR_STREAM(node->get_logger(), "Encountered error during localization: " << ex.what());
@@ -429,5 +440,6 @@ void Node::localization_loop() {
 Node::~Node() {
   atomic_node_running = false;
   sync_condition_variable.notify_all();
+  localization_condition_variable.notify_all();
 }
 } // namespace rko_lio::ros

@@ -97,8 +97,6 @@ public:
   Eigen::Matrix3d body_acceleration_covariance = Eigen::Matrix3d::Identity();
 
   GlobalMapMatcher global_matcher;
-  Sophus::SE3d transform_map_to_odom = Sophus::SE3d();
-
   IntervalStats interval_stats;
 
   explicit LIO(const Config& config_)
@@ -112,13 +110,19 @@ public:
   void add_imu_measurement(const Sophus::SE3d& extrinsic_imu2base, const ImuControl& raw_imu);
 
   // returns deskewed (only using initial motion guess) and clipped scan
-  Vector3dVector register_scan(const Vector3dVector& scan, const TimestampVector& timestamps);
+  Vector3dVector register_scan(const Vector3dVector& scan,
+                               const TimestampVector& timestamps,
+                               const Sophus::SE3d& transform_map_to_odom);
   // Pre-transform cloud by extrinsic - lidar to base. The return is still in the original frame
   Vector3dVector register_scan(const Sophus::SE3d& extrinsic_lidar2base,
                                const Vector3dVector& scan,
-                               const TimestampVector& timestamps);
+                               const TimestampVector& timestamps,
+                               const Sophus::SE3d& transform_map_to_odom);
 
-  Sophus::SE3d register_global_scan(const Vector3dVector& frame, const Sophus::SE3d& initial_guess);
+  Sophus::SE3d register_global_scan(const Sophus::SE3d& transform_map_to_odom,
+                                    const Sophus::SE3d& extrinsic_lidar2base,
+                                    const Vector3dVector& frame,
+                                    const Sophus::SE3d& initial_guess);
 
   void dump_results_to_disk(const std::filesystem::path& results_dir, const std::string& run_name) const;
 

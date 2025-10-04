@@ -102,10 +102,15 @@ public:
   size_t max_lidar_buffer_size = 50;
 
   std::jthread localization_thread;
+
   std::mutex localization_mutex;
-  size_t global_reg_period = 5;
+  std::mutex tf_mutex;
+
+  size_t global_reg_period = 50;
   size_t registration_count = 0;
-  std::queue<std::tuple<core::Vector3dVector, Sophus::SE3d>> localization_queue;
+  Sophus::SE3d transform_map_to_odom = Sophus::SE3d();
+  std::shared_ptr<const Sophus::SE3d> latest_map_to_odom;
+  std::queue<std::tuple<core::Vector3dVector, Sophus::SE3d, core::Secondsd>> localization_queue;
   std::condition_variable localization_condition_variable;
 
   Node() = delete;

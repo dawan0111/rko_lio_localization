@@ -405,7 +405,9 @@ void LIO::add_imu_measurement(const Sophus::SE3d& extrinsic_imu2base, const ImuC
 
 // ============================ lidar ===============================
 
-Vector3dVector LIO::register_scan(const Vector3dVector& scan, const TimestampVector& timestamps) {
+Vector3dVector LIO::register_scan(const Vector3dVector& scan,
+                                  const TimestampVector& timestamps,
+                                  const Sophus::SE3d& transform_map_to_odom) {
   const auto max = std::max_element(timestamps.cbegin(), timestamps.cend());
   const Secondsd current_lidar_time = *max;
 
@@ -451,7 +453,8 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan, const TimestampVec
     return Sophus::SE3d::exp(tau);
   };
 
-  const Sophus::SE3d initial_guess = lidar_state.pose * relative_pose_at_time(current_lidar_time);
+  const Sophus::SE3d initial_guess =
+      transform_map_to_odom * lidar_state.pose * relative_pose_at_time(current_lidar_time);
 
   // body acceleration filter
   const auto& accel_filter_info = get_accel_info(initial_guess.so3(), current_lidar_time);
@@ -462,7 +465,8 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan, const TimestampVec
 
   if (!map.Empty()) {
     SCOPED_PROFILER("ICP");
-    const Sophus::SE3d optimized_pose = icp(keypoints, map, initial_guess, config, accel_filter_info);
+    const Sophus::SE3d optimized_pose =
+        icp(keypoints, global_matcher.global_map, initial_guess, config, accel_filter_info);
 
     // estimate velocities and accelerations from the new pose
     const double dt = (current_lidar_time - lidar_state.time).count();
@@ -495,41 +499,44 @@ Vector3dVector LIO::register_scan(const Vector3dVector& scan, const TimestampVec
 
 Vector3dVector LIO::register_scan(const Sophus::SE3d& extrinsic_lidar2base,
                                   const Vector3dVector& scan,
-                                  const TimestampVector& timestamps) {
+                                  const TimestampVector& timestamps,
+                                  const Sophus::SE3d& transform_map_to_odom) {
   if (extrinsic_lidar2base.log().norm() < EPSILON) {
-    return register_scan(scan, timestamps);
+    return register_scan(scan, timestamps, transform_map_to_odom);
   }
 
   Vector3dVector transformed_scan = scan;
   transform_points(extrinsic_lidar2base, transformed_scan);
-  Vector3dVector frame = register_scan(transformed_scan, timestamps);
+  Vector3dVector frame = register_scan(transformed_scan, timestamps, transform_map_to_odom);
   transform_points(extrinsic_lidar2base.inverse(), frame);
   return frame;
 }
 
-Sophus::SE3d LIO::register_global_scan(const Vector3dVector& frame, const Sophus::SE3d& initial_guess) {
+Sophus::SE3d LIO::register_global_scan(const Sophus::SE3d& transform_map_to_odom,
+                                       const Sophus::SE3d& extrinsic_lidar2base,
+                                       const Vector3dVector& frame,
+                                       const Sophus::SE3d& initial_guess) {
   auto transform_map_to_base = transform_map_to_odom * initial_guess;
+  auto down_sampled_frame = voxel_down_sample(frame, config.global_voxel_size);
+
+  Vector3dVector transformed_scan = down_sampled_frame;
+  transform_points(extrinsic_lidar2base, transformed_scan);
 
   const Correspondences& correspondences =
-      data_association(transform_map_to_base, frame, global_matcher.global_map, config);
+      data_association(transform_map_to_base, transformed_scan, global_matcher.global_map, config);
 
   if (correspondences.size() < 3) {
     std::cout << "[WARNING] Not enough correspondences, keep previous map->odom.\n";
     return transform_map_to_odom;
   }
 
-  auto transform_map_to_optimize = global_matcher.solve(correspondences);
+  auto transform_map_to_optimize = global_matcher.solve(transform_map_to_base, correspondences);
   if (transform_map_to_optimize.log().norm() < EPSILON) {
     std::cout << "[WARNING] Global registration produced negligible update, keep previous map->odom.\n";
     return transform_map_to_odom;
   }
 
-  auto transform_base_to_optimize = transform_map_to_base.inverse() * transform_map_to_optimize;
-  auto transform_odom_to_optimize = initial_guess * transform_base_to_optimize;
-
-  transform_map_to_odom = transform_map_to_optimize * transform_odom_to_optimize.inverse();
-
-  return transform_map_to_odom;
+  return transform_map_to_optimize * initial_guess.inverse();
 }
 
 // ============================ logs ===============================

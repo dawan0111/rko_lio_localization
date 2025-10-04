@@ -49,7 +49,7 @@ public:
       : global_map_path_(global_map_path), global_map(voxel_size, clipping_distance, max_points_per_voxel) {
     initialize();
   };
-  Sophus::SE3d solve(const Correspondences& correspondences);
+  Sophus::SE3d solve(const Sophus::SE3d& transform_map_to_base, const Correspondences& correspondences);
 
 private:
   void initialize();
